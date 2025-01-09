@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <regex>
 #include <ctime>
+#include <fstream>
 
 // Configuration Constants
 const int PORT = 8080;
@@ -17,6 +18,17 @@ const int MAX_THREADS = 10;
 
 std::unordered_map<std::string, std::string> database;
 std::mutex db_mutex;
+
+std::string read_file(const std::string& file_path) {
+    std::ifstream file(file_path);
+    if (file.is_open()) {
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        return buffer.str();
+    } else {
+        return "<html><body><h1>500 Internal Server Error</h1><p>Could not read error page file.</p></body></html>";
+    }
+}
 
 void log(const std::string& message) {
     std::lock_guard<std::mutex> guard(db_mutex);
@@ -53,7 +65,7 @@ void handle_request(int new_socket) {
         if (database.find(path) != database.end()) {
             response = "HTTP/1.1 200 OK\n\n" + database[path];
         } else {
-            response = "HTTP/1.1 404 Not Found\n\nResource not found";
+            response = "HTTP/1.1 404 Not Found\nContent-Type: text/html\n\n" + read_file("404.html");
         }
     } else if (method == "POST" || method == "PUT") {
         std::lock_guard<std::mutex> guard(db_mutex);
@@ -69,7 +81,7 @@ void handle_request(int new_socket) {
                 database[path] = body;
                 response = "HTTP/1.1 200 OK\n\nResource updated";
             } else {
-                response = "HTTP/1.1 404 Not Found\n\nResource not found";
+                response = "HTTP/1.1 404 Not Found\nContent-Type: text/html\n\n" + read_file("404.html");
             }
         }
     } else if (method == "DELETE") {
@@ -78,10 +90,10 @@ void handle_request(int new_socket) {
             database.erase(path);
             response = "HTTP/1.1 200 OK\n\nResource deleted";
         } else {
-            response = "HTTP/1.1 404 Not Found\n\nResource not found";
+            response = "HTTP/1.1 404 Not Found\nContent-Type: text/html\n\n" + read_file("404.html");
         }
     } else {
-        response = "HTTP/1.1 400 Bad Request\n\nInvalid method";
+        response = "HTTP/1.1 400 Bad Request\nContent-Type: text/html\n\n" + read_file("400.html");
     }
 
     int bytes_sent = send(new_socket, response.c_str(), response.size(), 0);
