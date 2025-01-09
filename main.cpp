@@ -3,23 +3,31 @@
 #include <unordered_map>
 #include <sstream>
 #include <vector>
-#include <ctime>
-#include <cstdlib>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <regex>
+#include <ctime>
 
+// Configuration Constants
 const int PORT = 8080;
+const int MAX_THREADS = 10;
 
 std::unordered_map<std::string, std::string> database;
 std::mutex db_mutex;
 
 void log(const std::string& message) {
     std::lock_guard<std::mutex> guard(db_mutex);
-    std::cout << message << std::endl;
+    std::time_t now = std::time(0);
+    std::tm *ltm = std::localtime(&now);
+    std::cout << "[" << 1900 + ltm->tm_year << "-"
+              << 1 + ltm->tm_mon << "-"
+              << ltm->tm_mday << " "
+              << ltm->tm_hour << ":"
+              << ltm->tm_min << ":"
+              << ltm->tm_sec << "] " << message << std::endl;
 }
 
 void handle_request(int new_socket) {
@@ -107,12 +115,22 @@ int main() {
 
     log("Server started on port " + std::to_string(PORT));
 
-    while (true) {
-        if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-            perror("accept");
-            exit(EXIT_FAILURE);
-        }
-        std::thread(handle_request, new_socket).detach();
+    std::vector<std::thread> thread_pool;
+    for (int i = 0; i < MAX_THREADS; ++i) {
+        thread_pool.emplace_back([server_fd, &address, &addrlen]() {
+            while (true) {
+                int new_socket;
+                if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+                    perror("accept");
+                    exit(EXIT_FAILURE);
+                }
+                handle_request(new_socket);
+            }
+        });
+    }
+
+    for (auto& thread : thread_pool) {
+        thread.join();
     }
 
     return 0;
