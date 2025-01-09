@@ -15,6 +15,7 @@
 // Configuration Constants
 const int PORT = 8080;
 const int MAX_THREADS = 10;
+const std::string STATIC_DIR = "./static"; // Directory for static files
 
 std::unordered_map<std::string, std::string> database;
 std::mutex db_mutex;
@@ -26,8 +27,17 @@ std::string read_file(const std::string& file_path) {
         buffer << file.rdbuf();
         return buffer.str();
     } else {
-        return "<html><body><h1>500 Internal Server Error</h1><p>Could not read error page file.</p></body></html>";
+        return "<html><body><h1>500 Internal Server Error</h1><p>Could not read file.</p></body></html>";
     }
+}
+
+std::string get_mime_type(const std::string& file_path) {
+    if (file_path.ends_with(".html")) return "text/html";
+    if (file_path.ends_with(".css")) return "text/css";
+    if (file_path.ends_with(".js")) return "application/javascript";
+    if (file_path.ends_with(".png")) return "image/png";
+    if (file_path.ends_with(".jpg") || file_path.ends_with(".jpeg")) return "image/jpeg";
+    return "text/plain";
 }
 
 void log(const std::string& message) {
@@ -61,11 +71,17 @@ void handle_request(int new_socket) {
     std::string response;
 
     if (method == "GET") {
-        std::lock_guard<std::mutex> guard(db_mutex);
-        if (database.find(path) != database.end()) {
-            response = "HTTP/1.1 200 OK\n\n" + database[path];
-        } else {
+        if (path == "/") {
+            path = "/index.html"; // Default to index.html
+        }
+        std::string full_path = STATIC_DIR + path;
+        std::string mime_type = get_mime_type(full_path);
+        std::string file_content = read_file(full_path);
+
+        if (file_content == "<html><body><h1>500 Internal Server Error</h1><p>Could not read file.</p></body></html>") {
             response = "HTTP/1.1 404 Not Found\nContent-Type: text/html\n\n" + read_file("404.html");
+        } else {
+            response = "HTTP/1.1 200 OK\nContent-Type: " + mime_type + "\n\n" + file_content;
         }
     } else if (method == "POST" || method == "PUT") {
         std::lock_guard<std::mutex> guard(db_mutex);
