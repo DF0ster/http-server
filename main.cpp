@@ -32,9 +32,14 @@ void log(const std::string& message) {
 
 void handle_request(int new_socket) {
     char buffer[1024] = {0};
-    read(new_socket, buffer, 1024);
-    std::string request(buffer);
-    
+    int bytes_read = read(new_socket, buffer, 1024);
+    if (bytes_read < 0) {
+        log("Error reading from socket");
+        close(new_socket);
+        return;
+    }
+    std::string request(buffer, bytes_read);
+
     log("Received request:\n" + request);
 
     std::istringstream request_stream(request);
@@ -79,7 +84,11 @@ void handle_request(int new_socket) {
         response = "HTTP/1.1 400 Bad Request\n\nInvalid method";
     }
 
-    send(new_socket, response.c_str(), response.size(), 0);
+    int bytes_sent = send(new_socket, response.c_str(), response.size(), 0);
+    if (bytes_sent < 0) {
+        log("Error sending response");
+    }
+
     close(new_socket);
 }
 
