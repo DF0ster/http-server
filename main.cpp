@@ -10,22 +10,31 @@
 #include <condition_variable>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <regex>
 
 const int PORT = 8080;
 
 std::unordered_map<std::string, std::string> database;
 std::mutex db_mutex;
 
+void log(const std::string& message) {
+    std::lock_guard<std::mutex> guard(db_mutex);
+    std::cout << message << std::endl;
+}
+
 void handle_request(int new_socket) {
     char buffer[1024] = {0};
     read(new_socket, buffer, 1024);
     std::string request(buffer);
     
+    log("Received request:\n" + request);
+
     std::istringstream request_stream(request);
     std::string method, path, protocol;
     request_stream >> method >> path >> protocol;
 
     std::string response;
+
     if (method == "GET") {
         std::lock_guard<std::mutex> guard(db_mutex);
         if (database.find(path) != database.end()) {
@@ -33,23 +42,22 @@ void handle_request(int new_socket) {
         } else {
             response = "HTTP/1.1 404 Not Found\n\nResource not found";
         }
-    } else if (method == "POST") {
+    } else if (method == "POST" || method == "PUT") {
         std::lock_guard<std::mutex> guard(db_mutex);
         std::string body;
-        std::getline(request_stream, body); // To consume the blank line
-        std::getline(request_stream, body);
-        database[path] = body;
-        response = "HTTP/1.1 201 Created\n\nResource created";
-    } else if (method == "PUT") {
-        std::lock_guard<std::mutex> guard(db_mutex);
-        std::string body;
-        std::getline(request_stream, body); // To consume the blank line
-        std::getline(request_stream, body);
-        if (database.find(path) != database.end()) {
+        if (std::regex_search(request, std::regex("\r\n\r\n"))) {
+            body = request.substr(request.find("\r\n\r\n") + 4);
+        }
+        if (method == "POST") {
             database[path] = body;
-            response = "HTTP/1.1 200 OK\n\nResource updated";
+            response = "HTTP/1.1 201 Created\n\nResource created";
         } else {
-            response = "HTTP/1.1 404 Not Found\n\nResource not found";
+            if (database.find(path) != database.end()) {
+                database[path] = body;
+                response = "HTTP/1.1 200 OK\n\nResource updated";
+            } else {
+                response = "HTTP/1.1 404 Not Found\n\nResource not found";
+            }
         }
     } else if (method == "DELETE") {
         std::lock_guard<std::mutex> guard(db_mutex);
@@ -96,6 +104,8 @@ int main() {
         perror("listen");
         exit(EXIT_FAILURE);
     }
+
+    log("Server started on port " + std::to_string(PORT));
 
     while (true) {
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
