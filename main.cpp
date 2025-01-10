@@ -11,6 +11,7 @@
 #include <regex>
 #include <ctime>
 #include <fstream>
+#include <csignal>
 
 // Configuration Constants
 const int PORT = 8080;
@@ -19,7 +20,9 @@ const std::string STATIC_DIR = "./static"; // Directory for static files
 
 std::unordered_map<std::string, std::string> database;
 std::mutex db_mutex;
+std::atomic<bool> running(true);
 
+// Function to read file content
 std::string read_file(const std::string& file_path) {
     std::ifstream file(file_path);
     if (file.is_open()) {
@@ -31,6 +34,7 @@ std::string read_file(const std::string& file_path) {
     }
 }
 
+// Function to determine the MIME type based on file extension
 std::string get_mime_type(const std::string& file_path) {
     if (file_path.ends_with(".html")) return "text/html";
     if (file_path.ends_with(".css")) return "text/css";
@@ -40,6 +44,7 @@ std::string get_mime_type(const std::string& file_path) {
     return "text/plain";
 }
 
+// Function to log messages with timestamps
 void log(const std::string& message) {
     std::lock_guard<std::mutex> guard(db_mutex);
     std::time_t now = std::time(0);
@@ -52,6 +57,7 @@ void log(const std::string& message) {
               << ltm->tm_sec << "] " << message << std::endl;
 }
 
+// Function to handle client requests
 void handle_request(int new_socket) {
     char buffer[1024] = {0};
     int bytes_read = read(new_socket, buffer, 1024);
@@ -120,7 +126,17 @@ void handle_request(int new_socket) {
     close(new_socket);
 }
 
+// Signal handler for graceful shutdown
+void signal_handler(int signal) {
+    if (signal == SIGINT) {
+        log("Received SIGINT, shutting down...");
+        running = false;
+    }
+}
+
 int main() {
+    signal(SIGINT, signal_handler); // Register signal handler
+
     int server_fd, new_socket;
     struct sockaddr_in address;
     int opt = 1;
@@ -155,9 +171,10 @@ int main() {
     std::vector<std::thread> thread_pool;
     for (int i = 0; i < MAX_THREADS; ++i) {
         thread_pool.emplace_back([server_fd, &address, &addrlen]() {
-            while (true) {
+            while (running) {
                 int new_socket;
                 if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+                    if (!running) break;
                     perror("accept");
                     exit(EXIT_FAILURE);
                 }
@@ -170,5 +187,7 @@ int main() {
         thread.join();
     }
 
+    close(server_fd);
+    log("Server shutdown gracefully.");
     return 0;
 }
