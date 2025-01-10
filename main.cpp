@@ -12,15 +12,40 @@
 #include <ctime>
 #include <fstream>
 #include <csignal>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 // Configuration Constants
 const int PORT = 8080;
 const int MAX_THREADS = 10;
 const std::string STATIC_DIR = "./static"; // Directory for static files
+const std::string CERT_FILE = "server.crt"; // SSL certificate file
+const std::string KEY_FILE = "server.key"; // SSL key file
 
 std::unordered_map<std::string, std::string> database;
 std::mutex db_mutex;
 std::atomic<bool> running(true);
+
+// Function to initialize SSL context
+SSL_CTX* init_ssl_context() {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+
+    if (SSL_CTX_use_certificate_file(ctx, CERT_FILE.c_str(), SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(ctx, KEY_FILE.c_str(), SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+
+    return ctx;
+}
 
 // Function to read file content
 std::string read_file(const std::string& file_path) {
@@ -58,12 +83,12 @@ void log(const std::string& message) {
 }
 
 // Function to handle client requests
-void handle_request(int new_socket) {
+void handle_request(SSL* ssl) {
     char buffer[1024] = {0};
-    int bytes_read = read(new_socket, buffer, 1024);
+    int bytes_read = SSL_read(ssl, buffer, 1024);
     if (bytes_read < 0) {
-        log("Error reading from socket");
-        close(new_socket);
+        log("Error reading from SSL socket");
+        SSL_free(ssl);
         return;
     }
     std::string request(buffer, bytes_read);
@@ -118,12 +143,12 @@ void handle_request(int new_socket) {
         response = "HTTP/1.1 400 Bad Request\nContent-Type: text/html\n\n" + read_file("400.html");
     }
 
-    int bytes_sent = send(new_socket, response.c_str(), response.size(), 0);
+    int bytes_sent = SSL_write(ssl, response.c_str(), response.size());
     if (bytes_sent < 0) {
-        log("Error sending response");
+        log("Error sending response via SSL");
     }
 
-    close(new_socket);
+    SSL_free(ssl);
 }
 
 // Signal handler for graceful shutdown
@@ -137,7 +162,10 @@ void signal_handler(int signal) {
 int main() {
     signal(SIGINT, signal_handler); // Register signal handler
 
-    int server_fd, new_socket;
+    SSL_library_init();
+    SSL_CTX *ctx = init_ssl_context();
+
+    int server_fd;
     struct sockaddr_in address;
     int opt = 1;
     int addrlen = sizeof(address);
@@ -170,7 +198,7 @@ int main() {
 
     std::vector<std::thread> thread_pool;
     for (int i = 0; i < MAX_THREADS; ++i) {
-        thread_pool.emplace_back([server_fd, &address, &addrlen]() {
+        thread_pool.emplace_back([server_fd, &address, &addrlen, ctx]() {
             while (running) {
                 int new_socket;
                 if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
@@ -178,7 +206,18 @@ int main() {
                     perror("accept");
                     exit(EXIT_FAILURE);
                 }
-                handle_request(new_socket);
+
+                SSL *ssl = SSL_new(ctx);
+                SSL_set_fd(ssl, new_socket);
+
+                if (SSL_accept(ssl) <= 0) {
+                    ERR_print_errors_fp(stderr);
+                    SSL_free(ssl);
+                    close(new_socket);
+                    continue;
+                }
+
+                handle_request(ssl);
             }
         });
     }
@@ -189,5 +228,7 @@ int main() {
 
     close(server_fd);
     log("Server shutdown gracefully.");
+    SSL_CTX_free(ctx);
+    EVP_cleanup();
     return 0;
 }
