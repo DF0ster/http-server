@@ -1,21 +1,24 @@
-## Instructions
+### Instructions
 
-### Compile the Server:
+1. **Compile the Server**:
+Ensure you have OpenSSL installed on your system. Then, compile the project using the following commands:
 
-Ensure you have OpenSSL installed on your system. Then, compile the project using the following command:
+`mkdir build`
 
-`g++ -o server main.cpp request_handler.cpp database.cpp logger.cpp ssl_utils.cpp -lssl -lcrypto -pthread`
+`cd build`
 
-### Run the Server:
+`cmake ..`
 
-`./server`
+`make`
 
-### HTTPS Setup:
+3. **Run the Server**:
 
+`./HttpServer`
+
+5. **HTTPS Setup**:
 Use self-signed certificates for HTTPS support. You can create self-signed certificates using OpenSSL:
 
 `openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout server.key -out server.crt`
 
-### Custom Configuration
-
+7. **Custom Configuration**:
 Modify configurations as needed (e.g., port number, static directory).
